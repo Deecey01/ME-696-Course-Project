@@ -172,7 +172,7 @@ function ChartCard({ title, data, dataKey, color, domain=['auto', 'auto'] }) {
   return (
     <div className="bg-slate-800 p-5 rounded-2xl shadow-lg border border-slate-700 flex flex-col">
       <h3 className="text-slate-300 font-semibold mb-4">{title}</h3>
-      <div className="flex-grow min-h-[200px]">
+      <div className="w-full h-64">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
