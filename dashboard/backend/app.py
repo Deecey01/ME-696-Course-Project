@@ -21,6 +21,8 @@ app.add_middleware(
 SIMULATOR_WS = "ws://localhost:8000/ws/stream"
 ML_PREDICT_URL = "http://localhost:8001/predict"
 ML_BASELINE_URL = "http://localhost:8001/baseline"
+ML_HISTORY_URL = "http://localhost:8001/history"
+ML_TRAIN_URL = "http://localhost:8001/train"
 SIMULATOR_STRESS_URL = "http://localhost:8000/api/stress"
 
 class State:
@@ -98,6 +100,27 @@ async def trigger_stress(req: GenericRequest):
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(SIMULATOR_STRESS_URL, json={"active": req.active})
+            return resp.json()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+@app.get("/api/history")
+async def get_history():
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(ML_HISTORY_URL)
+            return resp.json()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+class TrainRequest(BaseModel):
+    samples: list
+
+@app.post("/api/train")
+async def trigger_retrain(req: TrainRequest):
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(ML_TRAIN_URL, json=req.samples)
             return resp.json()
         except Exception as e:
             return {"status": "error", "message": str(e)}

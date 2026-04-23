@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Optional
 import uvicorn
 import os
+from collections import deque
 
 from features import FeatureExtractor
 from baseline import BaselineCalibrator
@@ -14,6 +15,11 @@ app = FastAPI(title="Stress Detection ML Pipeline")
 extractor = FeatureExtractor(window_size=50) 
 calibrator = BaselineCalibrator(required_samples=300) 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.pkl")
+
+# History buffer for retraining over API. 
+# You can change maxlen here if you want to store more/less historical data for review.
+MAX_HISTORY_LEN = 100
+history_buffer = deque(maxlen=MAX_HISTORY_LEN)
 
 # Warm start the model if it doesnt exist to prevent cold start failures
 if not os.path.exists(MODEL_PATH):
@@ -54,6 +60,14 @@ async def predict_stress(data: SensorData):
     normalized_vec = calibrator.normalize(features)
     score = ml_model.predict(normalized_vec)
     
+    # Keep track of recent predictions for retraining feedback
+    history_buffer.append({
+        "timestamp": data.timestamp,
+        "features": normalized_vec,
+        "stress_score": round(score, 2),
+        "label": 1 if score > 50 else 0
+    })
+    
     return {
         "status": "success",
         "stress_score": round(score, 2),
@@ -68,6 +82,10 @@ async def start_baseline():
 @app.get("/baseline/status")
 async def baseline_status():
     return calibrator.format_calibration()
+
+@app.get("/history")
+async def get_history():
+    return list(history_buffer)
 
 @app.post("/train")
 async def trigger_training(samples: List[TrainData]):
