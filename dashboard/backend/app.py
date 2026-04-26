@@ -7,9 +7,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Dashboard Backend proxy")
+app = FastAPI(title="Dashboard Backend Proxy")
 
-# CORS so the react frontend can hit endpoints
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,19 +17,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SIMULATOR_WS = "ws://localhost:8000/ws/stream"
-ML_PREDICT_URL = "http://localhost:8001/predict"
-ML_BASELINE_URL = "http://localhost:8001/baseline"
-ML_HISTORY_URL = "http://localhost:8001/history"
-ML_TRAIN_URL = "http://localhost:8001/train"
+SIMULATOR_WS         = "ws://localhost:8000/ws/stream"
+ML_PREDICT_URL       = "http://localhost:8001/predict"
+ML_BASELINE_URL      = "http://localhost:8001/baseline"
 SIMULATOR_STRESS_URL = "http://localhost:8000/api/stress"
+SIMULATOR_TAP_URL    = "http://localhost:8000/api/stress/tap"
+
 
 class State:
     def __init__(self):
-        self.active_connections = []
-        
+        self.active_connections: list = []
+
+
 state = State()
 
+
+# ---------------------------------------------------------------------------
+# Frontend WebSocket
+# ---------------------------------------------------------------------------
 @app.websocket("/ws/frontend")
 async def websocket_frontend(websocket: WebSocket):
     await websocket.accept()
@@ -39,34 +43,31 @@ async def websocket_frontend(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        state.active_connections.remove(websocket)
+        if websocket in state.active_connections:
+            state.active_connections.remove(websocket)
 
+
+# ---------------------------------------------------------------------------
+# Data proxy loop
+# ---------------------------------------------------------------------------
 async def data_proxy_loop():
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                # connect to simulator
                 async with websockets.connect(SIMULATOR_WS) as ws:
                     print("Connected to simulator WS...")
                     while True:
-                        msg = await ws.recv()
+                        msg      = await ws.recv()
                         raw_data = json.loads(msg)
-                        
-                        # query ML
+
                         try:
-                            # send to ML predict
-                            resp = await client.post(ML_PREDICT_URL, json=raw_data, timeout=2.0)
+                            resp    = await client.post(ML_PREDICT_URL, json=raw_data, timeout=2.0)
                             ml_data = resp.json()
                         except Exception as e:
                             ml_data = {"status": "error", "error": str(e)}
-                            
-                        # merge packet
-                        merged = {
-                            "raw": raw_data,
-                            "ml": ml_data
-                        }
-                        
-                        # broadcast
+
+                        merged = {"raw": raw_data, "ml": ml_data}
+
                         if state.active_connections:
                             out_msg = json.dumps(merged)
                             for conn in list(state.active_connections):
@@ -75,16 +76,23 @@ async def data_proxy_loop():
                                 except Exception:
                                     if conn in state.active_connections:
                                         state.active_connections.remove(conn)
+
             except Exception as e:
                 print(f"WS error: {e}. Reconnecting in 5s...")
                 await asyncio.sleep(5)
+
 
 @app.on_event("startup")
 async def on_startup():
     asyncio.create_task(data_proxy_loop())
 
+
+# ---------------------------------------------------------------------------
+# REST proxies
+# ---------------------------------------------------------------------------
 class GenericRequest(BaseModel):
     active: bool = False
+
 
 @app.post("/api/baseline")
 async def trigger_baseline():
@@ -95,6 +103,7 @@ async def trigger_baseline():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+
 @app.post("/api/stress")
 async def trigger_stress(req: GenericRequest):
     async with httpx.AsyncClient() as client:
@@ -104,26 +113,17 @@ async def trigger_stress(req: GenericRequest):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-@app.get("/api/history")
-async def get_history():
+
+@app.post("/api/stress/tap")
+async def tap_stress():
+    """Proxy the tap request to the simulation engine."""
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(ML_HISTORY_URL)
+            resp = await client.post(SIMULATOR_TAP_URL)
             return resp.json()
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-class TrainRequest(BaseModel):
-    samples: list
-
-@app.post("/api/train")
-async def trigger_retrain(req: TrainRequest):
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(ML_TRAIN_URL, json=req.samples)
-            return resp.json()
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=True)
