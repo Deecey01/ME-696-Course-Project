@@ -1,19 +1,22 @@
 # Smart Vest Project: Real-Time Physiological Stress Detection
 
-The Smart Vest Project is an end-to-end, real-time physiological telemetry and machine learning system. It simulates a smart wearable vest equipped with sensors (Galvanic Skin Response, Heart Rate Variability, IMU, Respiration) and uses an incrementally trainable machine learning model to detect and alert on physiological stress events.
+The Smart Vest Project is an end-to-end, real-time physiological telemetry and machine learning system. It simulates a smart wearable vest equipped with sensors (Galvanic Skin Response, Heart Rate Variability, IMU, Respiration) and uses an offline-trained, highly accurate **XGBoost Classifier** to detect and alert on physiological stress events in real-time.
 
-The project is split into three main microservices:
+The project is split into several microservices:
 1. **Simulation Engine**: Generates real-time synthetic biological signals.
-2. **ML Pipeline**: A sliding-window feature extractor and Logistic Regression classifier that computes dynamic stress scores.
+2. **ML Pipeline**: A sliding-window feature extractor and XGBoost inference server that computes dynamic stress scores.
 3. **Web Dashboard**: A React frontend and FastAPI proxy backend that visualizes the data and controls the system.
+4. **Companion Apps**: A Mobile Web App and a Native Android Expo App with Bluetooth and system notification integrations.
 
 ---
 
 ## Tech Stack
-- **Languages**: Python 3.10+, JavaScript / JSX
+- **Languages**: Python 3.10+, JavaScript / JSX, React Native
 - **Backend & APIs**: FastAPI, Uvicorn, WebSockets
-- **Machine Learning**: Scikit-Learn (SGDClassifier), NumPy
-- **Frontend**: React, Vite, Tailwind CSS, Recharts, Lucide Icons
+- **Machine Learning**: XGBoost, Scikit-Learn, NumPy, Joblib
+- **Frontend / Dashboard**: React, Vite, Tailwind CSS, Recharts, Lucide Icons
+- **Mobile Native**: React Native (Expo), `expo-notifications`, `expo-haptics`
+- **Bluetooth**: Python `bless` (GATT Server), Web Bluetooth API
 
 ---
 
@@ -23,83 +26,68 @@ The project is split into three main microservices:
 smart-vest-project/
 ├── simulation_engine/     # Python FastAPI app simulating 10Hz synthetic physiological data.
 │   ├── signals/           # Data generators for GSR, HRV, IMU, and Respiration
-│   ├── simulator.py       # Main websocket and REST streamer (Port 8000)
-│   └── config.py          # Tuning parameters matching physiological limits
+│   └── simulator.py       # Main websocket and REST streamer (Port 8000)
 │
 ├── ml_pipeline/           # Python FastAPI Machine Learning inference server
 │   ├── features.py        # Sliding window tracking (5s) for peak matching / variance
-│   ├── baseline.py        # 30-second Z-score normalization logic
-│   ├── model.py           # Core SGDClassifier wrapper with .partial_fit() support
+│   ├── baseline.py        # 30-second Z-score normalization logic with physiological floors
+│   ├── model.py           # Core XGBoost wrapper for model.pkl
 │   └── inference.py       # ML API Endpoints (Port 8001)
 │
+├── notebooks/             # Offline GPU/CPU training environment
+│   └── Train_Model.ipynb  # Generates 180k synthetic samples and trains the XGBoost model
+│
 ├── dashboard/             
-│   ├── backend/           # Python FastAPI proxy (Port 8002) coordinating simulation & ML
-│   └── frontend/          # Vite + React dynamic monitoring dashboard (Port 5173)
+│   ├── backend/           # Proxy (Port 8002) coordinating simulation & ML
+│   │   ├── app.py
+│   │   └── ble_server.py  # BLE GATT Server broadcasting stress over Bluetooth
+│   └── frontend/          # Desktop Vite + React monitoring dashboard (Port 5173)
+│
+├── mobile_app/            # Mobile-optimized Vite Web App (Port 5174)
+└── native_app/            # True React Native Expo App (Push Notifications, Haptics)
 ```
 
 ---
 
 ## Getting Started
 
-To run the entire ecosystem locally, you will need to start the three individual backend servers alongside the Vite UI. 
+To simplify launching the ecosystem, you can use the unified control scripts.
 
-> **Prerequisites**: Python 3.10+, Node.js v20+
+> **Prerequisites**: Python 3.10+, Node.js v20+, macOS/Linux
 
-### 1. Start the Simulation Engine
-This component mocks the physical vest sensors.
+### 1. Booting the Ecosystem
+
+Start all backend services, the Desktop Dashboard, and the Mobile Web App:
 ```bash
-cd simulation_engine
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-python simulator.py
+./start.sh
 ```
-*(Runs on http://localhost:8000)*
-
-### 2. Start the Machine Learning Pipeline
-This component handles the buffer context, z-score calibration, and stress extraction.
+Or, start the backend services, Desktop Dashboard, and launch the **Native Expo App** (requires the Expo Go app on your Android phone):
 ```bash
-cd ml_pipeline
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-python inference.py
+./start.sh native
 ```
-*(Runs on http://localhost:8001)*
 
-### 3. Start the Dashboard Proxy
-Connects the simulation streams to the inference endpoints seamlessly.
+### 2. Stopping the Ecosystem
+To gracefully kill all Python, Node, and Vite processes running in the background:
 ```bash
-cd dashboard/backend
-python -m venv venv
-.\venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+./stop.sh
 ```
-*(Runs on http://localhost:8002)*
-
-### 4. Start the Web Dashboard
-Provides the realtime visualization and control GUI.
-```bash
-cd dashboard/frontend
-npm install
-npm run dev
-```
-*(Runs on http://localhost:5173)*
 
 ---
 
-## How to Use the Dashboard
+## How to Use the System
 
-Once all nodes are running, open your web browser to http://localhost:5173.
+### 1. Desktop Dashboard (`http://localhost:5173`)
+- **Run Calibration**: Click the **Start 30s Baseline Calibration** button. The ML pipeline will record a 300-point historical window to establish your unique resting mean and standard deviation.
+- **Trigger Stress Incident**: Tap the circular **Tap to Stress** button repeatedly. The simulation engine will smoothly escalate heart rate, sweat (GSR), and movement variance. The XGBoost model will catch the variance and trigger a red UI alert.
 
-1. **Dashboard Overview**: 
-   - A stream of telemetry data will begin generating on the graphs almost immediately.
-   - The ML Pipeline dictates the "Stress Score". Out of the box, it requires initial calibration.
-2. **Run Calibration**:
-   - Click the **Start 30s Baseline** button on the bottom left. 
-   - The ML pipeline will record a 300-point historical window to create strict mean and standard deviation thresholds specific to the current physiological state.
-3. **Trigger Stress Incident**:
-   - Click the **Inject Stress Event** button.
-   - The simulation engine will abruptly alter the physical telemetry generating chaotic IMU bursts, erratic respiration, elevated heart-rate, and climbing GSR voltages.
-   - The React dashboard will alert in real-time once the ml_pipeline notices the values significantly exceeding normal baseline variance!
+### 2. Companion Apps
+You can access the telemetry on your mobile device via three connection methods (Local WiFi, Cloud Proxy via Ngrok, or Bluetooth LE).
+- **Mobile Web App:** Go to `http://<YOUR_LOCAL_IP>:5174` on your phone browser.
+- **Native Expo App:** Run `./start.sh native` and scan the QR code using the **Expo Go** Android App. 
+  - *Native Features:* You can configure a threshold slider (e.g., 75). If the stress score breaches it, the Native App triggers deep hardware vibration (haptics) and drops a high-priority push notification with a system alarm sound.
+
+### 3. Training the Model
+The inference server requires a `model.pkl` file. 
+- Open `notebooks/Train_Model.ipynb` in Jupyter Notebook, VSCode, or Google Colab.
+- Run the cells to synthesize 180,000 biological data points and train an XGBoost ensemble of 1,000 deep trees.
+- Move the resulting `model.pkl` into the `ml_pipeline/` directory.
